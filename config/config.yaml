@@ -1,0 +1,35 @@
+seed: 42
+
+data:
+  raw_path: data/raw/PS_20174392719_1491204439457_log.csv
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  test_ratio: 0.15
+  chunksize: 250000
+
+temporal:
+  primary_window: 24
+  sensitivity_windows: [6, 72]
+
+graph:
+  uri: bolt://localhost:7687
+  database: neo4j
+  username: neo4j
+  password_env: NEO4J_PASSWORD
+  batch_size: 10000
+  pagerank_iterations: 20
+
+models:
+  logistic: true
+  random_forest: true
+  xgboost: true
+  mlp: true
+  gnn: false
+  random_forest_estimators: 200
+  mlp_epochs: 30
+  mlp_batch_size: 8192
+  early_stopping_patience: 5
+
+evaluation:
+  primary_metric: pr_auc
+  threshold_metric: f1
