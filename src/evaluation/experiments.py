@@ -29,6 +29,7 @@ FEATURE_FILES = {
     "tabular": "tabular_features.parquet",
     "static": "static_graph_features.parquet",
     "temporal": "temporal_graph_features.parquet",
+    "temporal_only": "temporal_graph_features.parquet",
 }
 
 
@@ -251,13 +252,12 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
                 + " |"
             )
 
-    completed_groups = sorted(results["features"].unique().tolist())
     expected_pairs = {
         (model, feature_set)
         for model in model_order
         for feature_set in feature_order
     }
-    completed_pairs = set(rows)
+    completed_pairs = set(rows).intersection(expected_pairs)
     if expected_pairs.issubset(completed_pairs):
         status = "All 12 planned model/feature experiments completed."
     else:
@@ -284,19 +284,60 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
             f"{int(split['test_steps']):,} test.",
             "- Reported PR-AUC, ROC-AUC, precision, recall, and F1 are test-set measurements. "
             "Threshold-dependent metrics use thresholds chosen on validation data only.",
+            f"- Static graph and planned static-plus-temporal experiments are not run: "
+            f"the training graph would require {int(split['train_steps']):,} transaction "
+            "relationships plus millions of account nodes, beyond AuraDB Free capacity. "
+            "No PaySim graph data was written to Aura.",
             "",
             *table,
-            "",
-            "The PaySim CSV was obtained from [Kaggle: Synthetic Financial Datasets For Fraud Detection](https://www.kaggle.com/datasets/ealaxi/paysim1), licensed CC BY-SA 4.0. "
-            "The raw dataset is not included in this repository.",
-            "",
         ]
     )
+    temporal_only_rows = [
+        rows[(model, "temporal_only")]
+        for model in model_order
+        if (model, "temporal_only") in rows
+    ]
+    if temporal_only_rows:
+        section += "\n".join(
+            [
+                "",
+                "### Supplemental temporal-only comparison",
+                "",
+                "These runs use tabular plus 24-hour temporal features, without static graph features. "
+                "They are reported separately and do not count toward the planned 12-run matrix.",
+                "",
+                "| Model | PR-AUC | Precision | Recall | F1 | ROC-AUC |",
+                "|---|---:|---:|---:|---:|---:|",
+                *[
+                    "| "
+                    + str(record["model"])
+                    + " | "
+                    + " | ".join(
+                        f"{float(record[key]):.6f}"
+                        for key in (
+                            "pr_auc",
+                            "precision",
+                            "recall",
+                            "f1",
+                            "roc_auc",
+                        )
+                    )
+                    + " |"
+                    for record in temporal_only_rows
+                ],
+            ]
+        )
+    section += (
+        "\n\nThe PaySim CSV was obtained from [Kaggle: Synthetic Financial Datasets For Fraud Detection]"
+        "(https://www.kaggle.com/datasets/ealaxi/paysim1), licensed CC BY-SA 4.0. "
+        "The raw dataset is not included in this repository.\n"
+    )
+    start_index = readme.index(start_marker) + len(start_marker)
+    end_index = readme.index(end_marker)
+    if start_index >= end_index:
+        raise ValueError("README.md measured-results markers are out of order")
     readme_path.write_text(
-        readme.replace(
-            f"{start_marker}\n{end_marker}",
-            f"{start_marker}\n{section}{end_marker}",
-        ),
+        f"{readme[:start_index]}\n{section}{readme[end_index:]}",
         encoding="utf-8",
     )
 
@@ -362,9 +403,34 @@ def run_experiments(
         if group == "tabular":
             selected = tabular_columns
         elif group == "static":
+            if not static_columns:
+                raise FileNotFoundError(
+                    f"Missing static graph cache: {static_path}. "
+                    "Run scripts/run_graph_features.py first."
+                )
             selected = tabular_columns + static_columns
-        else:
+        elif group == "temporal_only":
+            if not temporal_columns:
+                raise FileNotFoundError(
+                    f"Missing temporal graph cache: {temporal_path}. "
+                    "Run scripts/run_temporal_features.py first."
+                )
+            selected = tabular_columns + temporal_columns
+        elif group == "temporal":
+            if not static_columns:
+                raise FileNotFoundError(
+                    f"Missing static graph cache: {static_path}. "
+                    "The planned temporal group combines static and temporal "
+                    "features; run scripts/run_graph_features.py first."
+                )
+            if not temporal_columns:
+                raise FileNotFoundError(
+                    f"Missing temporal graph cache: {temporal_path}. "
+                    "Run scripts/run_temporal_features.py first."
+                )
             selected = tabular_columns + static_columns + temporal_columns
+        else:
+            raise ValueError(f"Unknown feature group: {group}")
         group_x = features[selected].to_numpy(dtype=np.float32)
         classical = _make_classical_models(config, y[train])
         models: dict[str, Any] = dict(classical)
@@ -434,7 +500,17 @@ def run_experiments(
                 plt.close()
 
     results_frame = pd.DataFrame(results)
-    results_frame.to_csv(output_dir / "main_results.csv", index=False)
+    results_path = output_dir / "main_results.csv"
+    if results_path.is_file():
+        previous_results = pd.read_csv(results_path)
+        if {"model", "features"}.issubset(previous_results.columns):
+            results_frame = pd.concat(
+                [previous_results, results_frame], ignore_index=True
+            ).drop_duplicates(["model", "features"], keep="last")
+    results_frame = results_frame.sort_values(["model", "features"]).reset_index(
+        drop=True
+    )
+    results_frame.to_csv(results_path, index=False)
     _save_plots(results_frame, curves)
     _publish_readme_results(results_frame)
     _save_research_summary(results_frame)

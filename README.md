@@ -31,6 +31,8 @@ python run_pipeline.py
 
 `run_baselines.py` runs the tabular-only model comparison. `run_temporal_features.py` also generates configured 6h and 72h sensitivity caches; the primary matrix uses the configured 24h window.
 
+When static graph features cannot be generated, `python scripts/run_temporal_only_experiments.py` runs a supplemental tabular-plus-24h-temporal comparison. These results are published separately and are not substituted for the planned static-plus-temporal matrix.
+
 The notebooks in `notebooks/` are presentation/exploration entry points; reusable logic stays in `src/`. Open them with the repository root as the working directory, or run them from the notebook directory (their bootstrap handles either location).
 
 ## Methodology and artifacts
@@ -40,10 +42,10 @@ The notebooks in `notebooks/` are presentation/exploration entry points; reusabl
 
 **Status:** Partial run: 4/12 planned experiments completed. Results below are measured; missing matrix cells are not run. Do not interpret the table as a completed ablation.
 
-- Static and temporal graph-feature experiments were not run because no Neo4j/GDS service was configured in the execution environment.
 - Dataset: 6,362,620 transactions; 8,213 fraud (0.1291%).
 - Chronological boundaries by unique step: train through 520, validation through 631, test through 743. Rows: 6,082,007 train / 191,147 validation / 89,466 test.
 - Reported PR-AUC, ROC-AUC, precision, recall, and F1 are test-set measurements. Threshold-dependent metrics use thresholds chosen on validation data only.
+- Static graph and planned static-plus-temporal experiments are not run: the training graph would require 6,082,007 transaction relationships plus millions of account nodes, beyond AuraDB Free capacity. No PaySim graph data was written to Aura.
 
 | Model | Features | PR-AUC | Precision | Recall | F1 | ROC-AUC |
 |---|---|---:|---:|---:|---:|---:|
@@ -59,6 +61,16 @@ The notebooks in `notebooks/` are presentation/exploration entry points; reusabl
 | MLP | tabular | 0.911705 | 0.732240 | 0.856230 | 0.789396 | 0.997222 |
 | MLP | static | Not run | Not run | Not run | Not run | Not run |
 | MLP | temporal | Not run | Not run | Not run | Not run | Not run |
+### Supplemental temporal-only comparison
+
+These runs use tabular plus 24-hour temporal features, without static graph features. They are reported separately and do not count toward the planned 12-run matrix.
+
+| Model | PR-AUC | Precision | Recall | F1 | ROC-AUC |
+|---|---:|---:|---:|---:|---:|
+| Logistic | 0.659818 | 0.827586 | 0.498403 | 0.622134 | 0.971500 |
+| Random Forest | 1.000000 | 1.000000 | 0.999201 | 0.999600 | 1.000000 |
+| XGBoost | 0.996539 | 0.971273 | 0.999201 | 0.985039 | 0.999954 |
+| MLP | 0.877710 | 0.831137 | 0.805911 | 0.818329 | 0.994307 |
 
 The PaySim CSV was obtained from [Kaggle: Synthetic Financial Datasets For Fraud Detection](https://www.kaggle.com/datasets/ealaxi/paysim1), licensed CC BY-SA 4.0. The raw dataset is not included in this repository.
 <!-- END MEASURED RESULTS -->

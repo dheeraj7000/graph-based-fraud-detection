@@ -175,11 +175,26 @@ def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> Non
                 "recall": 0.4,
                 "f1": 0.34,
                 "roc_auc": 0.7,
-            }
+            },
+            {
+                "model": "Logistic",
+                "features": "temporal_only",
+                "pr_auc": 0.25,
+                "precision": 0.35,
+                "recall": 0.45,
+                "f1": 0.39,
+                "roc_auc": 0.75,
+            },
         ]
     )
     _publish_readme_results(results)
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "Partial run" in readme
+    assert "Partial run: 1/12 planned experiments completed." in readme
     assert "| Logistic | tabular | 0.200000 | 0.300000 |" in readme
     assert "| Logistic | static | Not run |" in readme
+    assert "Supplemental temporal-only comparison" in readme
+    assert "do not count toward the planned 12-run matrix" in readme
+    assert "| Logistic | 0.250000 | 0.350000 |" in readme
+    _publish_readme_results(results)
+    updated_readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert updated_readme == readme
