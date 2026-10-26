@@ -27,13 +27,51 @@ def training_graph_transactions(
 def causal_unique_counterparty_counts(
     transactions: pd.DataFrame, train_end_step: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Count distinct prior neighbors per row, with all transactions at a step batched."""
-    ordered = transactions.loc[:, ["step", "nameOrig", "nameDest"]].copy()
+    prefix = causal_static_prefix_features(transactions, train_end_step)
+    return (
+        prefix["source_unique_counterparty"].to_numpy(),
+        prefix["destination_unique_counterparty"].to_numpy(),
+    )
+
+
+def causal_static_prefix_features(
+    transactions: pd.DataFrame, train_end_step: int
+) -> pd.DataFrame:
+    """Build prior-only account aggregates, updating history only after each step."""
+    required = {"step", "amount", "nameOrig", "nameDest"}
+    missing = required.difference(transactions.columns)
+    if missing:
+        raise ValueError(f"Static feature input missing columns: {sorted(missing)}")
+    ordered = transactions.loc[:, ["step", "amount", "nameOrig", "nameDest"]].copy()
     ordered["_row_id"] = range(len(ordered))
     ordered = ordered.sort_values(["step", "_row_id"], kind="stable")
+    size = len(ordered)
+    stats = {
+        f"{role}_{name}": np.zeros(
+            size,
+            dtype=(
+                np.float64
+                if name == "weighted_degree"
+                else np.int8
+                if name == "unseen"
+                else np.int32
+            ),
+        )
+        for role in ("source", "destination")
+        for name in (
+            "in_degree",
+            "out_degree",
+            "weighted_degree",
+            "unique_counterparty",
+            "unseen",
+        )
+    }
+    in_degree: dict[str, int] = {}
+    out_degree: dict[str, int] = {}
+    in_value: dict[str, float] = {}
+    out_value: dict[str, float] = {}
     neighbors: dict[str, set[str]] = {}
-    source_counts = np.zeros(len(ordered), dtype=np.int32)
-    destination_counts = np.zeros(len(ordered), dtype=np.int32)
+    seen_accounts: set[str] = set()
 
     for step, current in ordered.groupby("step", sort=True):
         if int(step) > train_end_step:
@@ -41,19 +79,52 @@ def causal_unique_counterparty_counts(
         source_ids = current["nameOrig"].astype(str)
         destination_ids = current["nameDest"].astype(str)
         row_ids = current["_row_id"].to_numpy()
-        source_counts[row_ids] = [
-            len(neighbors.get(account, ())) for account in source_ids
-        ]
-        destination_counts[row_ids] = [
-            len(neighbors.get(account, ())) for account in destination_ids
-        ]
+        amounts = current["amount"].to_numpy(dtype=np.float64)
+        for role, accounts in (
+            ("source", source_ids),
+            ("destination", destination_ids),
+        ):
+            stats[f"{role}_in_degree"][row_ids] = [
+                in_degree.get(account, 0) for account in accounts
+            ]
+            stats[f"{role}_out_degree"][row_ids] = [
+                out_degree.get(account, 0) for account in accounts
+            ]
+            stats[f"{role}_weighted_degree"][row_ids] = [
+                in_value.get(account, 0.0) + out_value.get(account, 0.0)
+                for account in accounts
+            ]
+            stats[f"{role}_unique_counterparty"][row_ids] = [
+                len(neighbors.get(account, ())) for account in accounts
+            ]
+            stats[f"{role}_unseen"][row_ids] = [
+                int(account not in seen_accounts) for account in accounts
+            ]
+
+        source_events = pd.DataFrame(
+            {"account": source_ids.to_numpy(), "amount": amounts}
+        ).groupby("account", sort=False)["amount"].agg(["size", "sum"])
+        destination_events = pd.DataFrame(
+            {"account": destination_ids.to_numpy(), "amount": amounts}
+        ).groupby("account", sort=False)["amount"].agg(["size", "sum"])
+        for account, event in source_events.iterrows():
+            account = str(account)
+            out_degree[account] = out_degree.get(account, 0) + int(event["size"])
+            out_value[account] = out_value.get(account, 0.0) + float(event["sum"])
+        for account, event in destination_events.iterrows():
+            account = str(account)
+            in_degree[account] = in_degree.get(account, 0) + int(event["size"])
+            in_value[account] = in_value.get(account, 0.0) + float(event["sum"])
+
         current_pairs = pd.DataFrame(
             {"source": source_ids.to_numpy(), "destination": destination_ids.to_numpy()}
         ).drop_duplicates()
         for source, destination in current_pairs.itertuples(index=False, name=None):
             neighbors.setdefault(source, set()).add(destination)
             neighbors.setdefault(destination, set()).add(source)
-    return source_counts, destination_counts
+        seen_accounts.update(source_ids)
+        seen_accounts.update(destination_ids)
+    return pd.DataFrame(stats, index=transactions.index)
 
 
 def build_training_graph(
@@ -266,36 +337,18 @@ def attach_account_features(
         if not train_rows.any():
             raise ValueError("No transaction rows fall within the training cutoff")
         training_transactions = transactions.loc[train_rows]
-        source_unique, destination_unique = causal_unique_counterparty_counts(
-            training_transactions, train_end_step
-        )
-        from src.graph.temporal_features import build_temporal_features
-
-        full_history_window = int(training_transactions["step"].max()) - int(
-            training_transactions["step"].min()
-        ) + 1
-        causal = build_temporal_features(
-            training_transactions, window=full_history_window
-        )
+        causal = causal_static_prefix_features(training_transactions, train_end_step)
         for role in ("source", "destination"):
-            incoming_count = causal[
-                f"incoming_tx_count_{full_history_window}h"
-            ]
-            outgoing_count = causal[
-                f"outgoing_tx_count_{full_history_window}h"
-            ]
-            incoming_value = causal[f"incoming_value_{full_history_window}h"]
-            outgoing_value = causal[f"outgoing_value_{full_history_window}h"]
-            features.loc[train_rows, f"{role}_in_degree"] = incoming_count.to_numpy()
-            features.loc[train_rows, f"{role}_out_degree"] = outgoing_count.to_numpy()
-            features.loc[train_rows, f"{role}_weighted_degree"] = (
-                incoming_value.to_numpy() + outgoing_value.to_numpy()
-            )
-            unique_counts = source_unique if role == "source" else destination_unique
-            features.loc[train_rows, f"{role}_unique_counterparty"] = unique_counts
-            features.loc[train_rows, f"{role}_unseen"] = (
-                (incoming_count + outgoing_count).eq(0).astype("int8").to_numpy()
-            )
+            for name in (
+                "in_degree",
+                "out_degree",
+                "weighted_degree",
+                "unique_counterparty",
+                "unseen",
+            ):
+                features.loc[train_rows, f"{role}_{name}"] = causal[
+                    f"{role}_{name}"
+                ].to_numpy()
             features.loc[train_rows, f"{role}_pagerank"] = np.float32(0.0)
             features.loc[train_rows, f"{role}_community_id"] = -1
     return features

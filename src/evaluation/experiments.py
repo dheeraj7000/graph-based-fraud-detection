@@ -7,6 +7,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -32,7 +33,9 @@ FEATURE_FILES = {
 
 
 def _load_features(groups: tuple[str, ...]) -> pd.DataFrame:
-    features = pd.read_parquet(Path("data/features") / FEATURE_FILES["tabular"])
+    base = pd.read_parquet(Path("data/features") / FEATURE_FILES["tabular"])
+    row_ids = base.pop("_row_id").to_numpy()
+    feature_blocks = [base]
     for group in groups:
         if group == "tabular":
             continue
@@ -42,14 +45,14 @@ def _load_features(groups: tuple[str, ...]) -> pd.DataFrame:
                 f"Missing {group} feature cache: {path}. Run its feature-generation stage."
             )
         extra = pd.read_parquet(path)
-        features = features.merge(
-            extra, on="_row_id", how="left", validate="one_to_one"
-        )
+        extra_row_ids = extra.pop("_row_id").to_numpy()
+        if not np.array_equal(row_ids, extra_row_ids):
+            raise ValueError(f"{group} feature rows do not match tabular row IDs")
+        feature_blocks.append(extra)
+    features = pd.concat(feature_blocks, axis=1, copy=False)
     if features.isna().any().any():
         raise ValueError("Feature matrix has missing values after cache merge")
-    identifiers = {"_row_id", "nameOrig", "nameDest", "isFraud", "isFlaggedFraud"}
-    columns = [column for column in features if column not in identifiers]
-    return features[columns]
+    return features
 
 
 def _make_classical_models(
@@ -152,7 +155,13 @@ def _save_plots(
 
 
 def _save_research_summary(results: pd.DataFrame) -> None:
-    if not {"tabular", "static", "temporal"}.issubset(results["features"].unique()):
+    expected = {
+        (model, feature_set)
+        for model in ("Logistic", "Random Forest", "XGBoost", "MLP")
+        for feature_set in ("tabular", "static", "temporal")
+    }
+    completed = set(zip(results["model"], results["features"]))
+    if not expected.issubset(completed):
         return
     by_model = results.pivot(index="model", columns="features")
     static_gain = by_model["pr_auc"]["static"] - by_model["pr_auc"]["tabular"]
@@ -202,6 +211,96 @@ def _save_research_summary(results: pd.DataFrame) -> None:
     )
 
 
+def _publish_readme_results(results: pd.DataFrame) -> None:
+    readme_path = Path("README.md")
+    if not readme_path.is_file():
+        raise FileNotFoundError("README.md is required to publish experiment results")
+    readme = readme_path.read_text(encoding="utf-8")
+    start_marker = "<!-- BEGIN MEASURED RESULTS -->"
+    end_marker = "<!-- END MEASURED RESULTS -->"
+    if readme.count(start_marker) != 1 or readme.count(end_marker) != 1:
+        raise ValueError("README.md must contain exactly one measured-results marker pair")
+
+    split_path = Path("data/processed/split.json")
+    eda_path = Path("results/metrics/eda_summary.json")
+    split = json.loads(split_path.read_text(encoding="utf-8"))
+    eda = json.loads(eda_path.read_text(encoding="utf-8"))
+    rows = {
+        (str(row["model"]), str(row["features"])): row
+        for row in results.to_dict(orient="records")
+    }
+    model_order = ("Logistic", "Random Forest", "XGBoost", "MLP")
+    feature_order = ("tabular", "static", "temporal")
+    table = [
+        "| Model | Features | PR-AUC | Precision | Recall | F1 | ROC-AUC |",
+        "|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for model in model_order:
+        for feature_set in feature_order:
+            record = rows.get((model, feature_set))
+            if record is None:
+                values = ["Not run"] * 5
+            else:
+                values = [
+                    f"{float(record[key]):.6f}"
+                    for key in ("pr_auc", "precision", "recall", "f1", "roc_auc")
+                ]
+            table.append(
+                f"| {model} | {feature_set} | "
+                + " | ".join(values)
+                + " |"
+            )
+
+    completed_groups = sorted(results["features"].unique().tolist())
+    expected_pairs = {
+        (model, feature_set)
+        for model in model_order
+        for feature_set in feature_order
+    }
+    completed_pairs = set(rows)
+    if expected_pairs.issubset(completed_pairs):
+        status = "All 12 planned model/feature experiments completed."
+    else:
+        status = (
+            f"Partial run: {len(completed_pairs)}/12 planned experiments completed. "
+            "Results below are measured; missing matrix cells are not run. "
+            "Do not interpret the table as a completed ablation."
+        )
+    section = "\n".join(
+        [
+            "## Measured experiment results",
+            "",
+            f"**Status:** {status}",
+            "",
+            f"- Dataset: {int(eda['transactions']):,} transactions; "
+            f"{int(eda['fraud_count']):,} fraud "
+            f"({float(eda['fraud_percentage']):.4f}%).",
+            f"- Chronological boundaries by unique step: train through "
+            f"{int(split['train_end_step'])}, validation through "
+            f"{int(split['validation_end_step'])}, test through "
+            f"{int(split['test_end_step'])}. Rows: "
+            f"{int(split['train_steps']):,} train / "
+            f"{int(split['validation_steps']):,} validation / "
+            f"{int(split['test_steps']):,} test.",
+            "- Reported PR-AUC, ROC-AUC, precision, recall, and F1 are test-set measurements. "
+            "Threshold-dependent metrics use thresholds chosen on validation data only.",
+            "",
+            *table,
+            "",
+            "The PaySim CSV was obtained from [Kaggle: Synthetic Financial Datasets For Fraud Detection](https://www.kaggle.com/datasets/ealaxi/paysim1), licensed CC BY-SA 4.0. "
+            "The raw dataset is not included in this repository.",
+            "",
+        ]
+    )
+    readme_path.write_text(
+        readme.replace(
+            f"{start_marker}\n{end_marker}",
+            f"{start_marker}\n{section}{end_marker}",
+        ),
+        encoding="utf-8",
+    )
+
+
 def run_experiments(
     feature_groups: tuple[str, ...] = ("tabular", "static", "temporal")
 ) -> pd.DataFrame:
@@ -213,33 +312,39 @@ def run_experiments(
     tabular_file = Path("data/features") / FEATURE_FILES["tabular"]
     tabular_columns = [
         column
-        for column in pd.read_parquet(tabular_file).columns
+        for column in pq.ParquetFile(tabular_file).schema.names
         if column != "_row_id"
     ]
     static_path = Path("data/features") / FEATURE_FILES["static"]
     temporal_path = Path("data/features") / FEATURE_FILES["temporal"]
     static_columns = (
-        [column for column in pd.read_parquet(static_path).columns if column != "_row_id"]
+        [
+            column
+            for column in pq.ParquetFile(static_path).schema.names
+            if column != "_row_id"
+        ]
         if static_path.is_file()
         else []
     )
     temporal_columns = (
-        [column for column in pd.read_parquet(temporal_path).columns if column != "_row_id"]
+        [
+            column
+            for column in pq.ParquetFile(temporal_path).schema.names
+            if column != "_row_id"
+        ]
         if temporal_path.is_file()
         else []
     )
-    features = _load_features(feature_groups)
-    aligned = metadata.merge(
-        features.assign(_row_id=np.arange(len(features))),
-        on="_row_id",
-        validate="one_to_one",
-    )
-    train = aligned["split"].eq("train").to_numpy()
-    validation = aligned["split"].eq("validation").to_numpy()
-    test = aligned["split"].eq("test").to_numpy()
+    row_ids = metadata["_row_id"].to_numpy()
+    if not np.array_equal(row_ids, np.arange(len(metadata))):
+        raise ValueError("Split metadata row IDs must be contiguous and ordered")
+    split = metadata["split"].to_numpy()
+    train = split == "train"
+    validation = split == "validation"
+    test = split == "test"
     if not train.any() or not validation.any() or not test.any():
         raise ValueError("Training, validation, and test partitions must all be non-empty")
-    y = aligned["isFraud"].to_numpy(dtype=np.int8)
+    y = metadata["isFraud"].to_numpy(dtype=np.int8)
     if np.unique(y[validation]).size != 2:
         raise ValueError("Validation period must contain fraud and non-fraud rows")
     if np.unique(y[test]).size != 2:
@@ -253,14 +358,14 @@ def run_experiments(
     results: list[dict[str, Any]] = []
     curves: list[tuple[np.ndarray, np.ndarray, str]] = []
     for group in feature_groups:
-        # Every matrix is the same rows; only the selected feature block changes.
+        features = _load_features((group,))
         if group == "tabular":
             selected = tabular_columns
         elif group == "static":
             selected = tabular_columns + static_columns
         else:
             selected = tabular_columns + static_columns + temporal_columns
-        group_x = aligned[selected].to_numpy(dtype=np.float32)
+        group_x = features[selected].to_numpy(dtype=np.float32)
         classical = _make_classical_models(config, y[train])
         models: dict[str, Any] = dict(classical)
         if config["models"].get("mlp", True):
@@ -293,7 +398,7 @@ def run_experiments(
                 }
             )
             key = f"{model_name}_{group}"
-            test_ids = aligned.loc[test, "_row_id"].to_numpy()
+            test_ids = row_ids[test]
             pd.DataFrame(
                 {
                     "_row_id": test_ids,
@@ -331,6 +436,7 @@ def run_experiments(
     results_frame = pd.DataFrame(results)
     results_frame.to_csv(output_dir / "main_results.csv", index=False)
     _save_plots(results_frame, curves)
+    _publish_readme_results(results_frame)
     _save_research_summary(results_frame)
     static_path = Path("data/features") / FEATURE_FILES["static"]
     if static_path.is_file() and not results_frame.empty:

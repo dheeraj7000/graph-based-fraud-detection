@@ -3,6 +3,7 @@ import pandas as pd
 
 from src.data.preprocess import make_tabular_features
 from src.data.split import chronological_split
+from src.evaluation.experiments import _publish_readme_results
 from src.evaluation.metrics import evaluate_with_validation_threshold, select_threshold
 from src.graph.static_features import (
     attach_account_features,
@@ -12,6 +13,7 @@ from src.graph.static_features import (
 from src.graph.temporal_features import (
     build_temporal_features,
     max_history_step_for_transaction,
+    stream_temporal_features,
 )
 
 
@@ -63,6 +65,21 @@ def test_temporal_features_exclude_same_step_and_expire_old_history() -> None:
     assert max_history_step_for_transaction([1, 2, 25], 26) == 25
 
 
+def test_streaming_temporal_features_preserve_step_boundaries(tmp_path) -> None:
+    transactions = sample_transactions()
+    csv_path = tmp_path / "transactions.csv"
+    parquet_path = tmp_path / "features.parquet"
+    transactions.to_csv(csv_path, index=False)
+    row_count = stream_temporal_features(csv_path, parquet_path, window=24)
+    streamed = pd.read_parquet(parquet_path)
+    expected = build_temporal_features(transactions, window=24)
+    assert row_count == len(transactions)
+    assert streamed["_row_id"].tolist() == list(range(len(transactions)))
+    pd.testing.assert_frame_equal(
+        streamed.drop(columns="_row_id").reset_index(drop=True), expected
+    )
+
+
 def test_training_graph_is_cut_off_at_train_end() -> None:
     training = training_graph_transactions(sample_transactions(), 2)
     assert training["step"].max() == 2
@@ -85,15 +102,19 @@ def test_training_static_graph_features_use_only_prior_steps() -> None:
     features = attach_account_features(transactions, accounts, train_end_step=2)
     assert features.loc[0, "source_out_degree"] == 0
     assert features.loc[2, "source_out_degree"] == 1
+    assert features.loc[2, "destination_in_degree"] == 2
     assert features.loc[2, "source_pagerank"] == 0
     assert features.loc[2, "source_community_id"] == -1
     assert features.loc[3, "source_pagerank"] == 0.2
+    assert features.loc[0, "source_unseen"] == 1
+    assert features.loc[2, "source_unseen"] == 0
 
 
 def test_static_unique_counterparties_deduplicate_bidirectional_edges() -> None:
     transactions = pd.DataFrame(
         {
             "step": [1, 2, 3],
+            "amount": [1.0, 2.0, 3.0],
             "nameOrig": ["A", "B", "A"],
             "nameDest": ["B", "A", "B"],
         }
@@ -125,3 +146,40 @@ def test_threshold_selection_rejects_validation_without_both_classes() -> None:
         assert "both classes" in str(error)
     else:
         raise AssertionError("Expected a clear error for one-class validation labels")
+
+
+def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> None:
+    (tmp_path / "results" / "metrics").mkdir(parents=True)
+    (tmp_path / "data" / "processed").mkdir(parents=True)
+    (tmp_path / "README.md").write_text(
+        "Header\n<!-- BEGIN MEASURED RESULTS -->\n<!-- END MEASURED RESULTS -->\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "data" / "processed" / "split.json").write_text(
+        '{"train_end_step": 520, "validation_end_step": 631, "test_end_step": 743, '
+        '"train_steps": 600, "validation_steps": 200, "test_steps": 100}',
+        encoding="utf-8",
+    )
+    (tmp_path / "results" / "metrics" / "eda_summary.json").write_text(
+        '{"transactions": 900, "fraud_count": 9, "fraud_percentage": 1.0}',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    results = pd.DataFrame(
+        [
+            {
+                "model": "Logistic",
+                "features": "tabular",
+                "pr_auc": 0.2,
+                "precision": 0.3,
+                "recall": 0.4,
+                "f1": 0.34,
+                "roc_auc": 0.7,
+            }
+        ]
+    )
+    _publish_readme_results(results)
+    readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "Partial run" in readme
+    assert "| Logistic | tabular | 0.200000 | 0.300000 |" in readme
+    assert "| Logistic | static | Not run |" in readme
