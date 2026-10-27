@@ -33,6 +33,18 @@ The local graph implementation uses NetworkX weighted PageRank and weakly connec
 
 The notebooks in `notebooks/` are presentation/exploration entry points; reusable logic stays in `src/`. Open them with the repository root as the working directory, or run them from the notebook directory (their bootstrap handles either location).
 
+## Project guide and presentation
+
+See [the project guide](docs/PROJECT_GUIDE.md) for the end-to-end workflow, feature definitions, leakage controls, result interpretation, and known limitations. The [PowerPoint presentation](presentations/Graph_Based_Fraud_Detection.pptx) summarizes the project and its measured results.
+
+Regenerate the deck after running the experiments:
+
+```powershell
+python scripts/create_presentation.py
+```
+
+The generator reads `results/metrics/main_results.csv` and sampled-graph metadata, so its score chart reflects the current run. It requires the dependencies in `requirements.txt`.
+
 ## Methodology and artifacts
 
 <!-- BEGIN MEASURED RESULTS -->

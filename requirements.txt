@@ -8,4 +8,5 @@ duckdb>=1.1
 xgboost>=2.0
 torch>=2.2
 networkx>=3.0
+python-pptx>=1.0.2
 pytest>=8.0
