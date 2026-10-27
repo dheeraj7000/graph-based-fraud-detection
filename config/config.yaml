@@ -18,6 +18,7 @@ graph:
   password_env: NEO4J_PASSWORD
   batch_size: 10000
   pagerank_iterations: 20
+  sampled_edge_limit: 50000
 
 models:
   logistic: true

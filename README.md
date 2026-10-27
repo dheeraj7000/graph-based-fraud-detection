@@ -33,6 +33,8 @@ python run_pipeline.py
 
 When static graph features cannot be generated, `python scripts/run_temporal_only_experiments.py` runs a supplemental tabular-plus-24h-temporal comparison. These results are published separately and are not substituted for the planned static-plus-temporal matrix.
 
+On resource-limited local machines, run `python scripts/run_sampled_graph_features.py` followed by `python scripts/run_sampled_graph_experiments.py` for a reproducible 50,000-edge NetworkX sample. The graph is built only from sampled training transactions, sampled training rows are used for fitting, and validation/test remain unchanged. This CPU-only sample uses weighted PageRank and weakly connected components (not Louvain); it is a resource-bounded exploratory comparison, not a substitute for the full Neo4j/GDS matrix.
+
 The notebooks in `notebooks/` are presentation/exploration entry points; reusable logic stays in `src/`. Open them with the repository root as the working directory, or run them from the notebook directory (their bootstrap handles either location).
 
 ## Methodology and artifacts
@@ -61,6 +63,7 @@ The notebooks in `notebooks/` are presentation/exploration entry points; reusabl
 | MLP | tabular | 0.911705 | 0.732240 | 0.856230 | 0.789396 | 0.997222 |
 | MLP | static | Not run | Not run | Not run | Not run | Not run |
 | MLP | temporal | Not run | Not run | Not run | Not run | Not run |
+
 ### Supplemental temporal-only comparison
 
 These runs use tabular plus 24-hour temporal features, without static graph features. They are reported separately and do not count toward the planned 12-run matrix.
@@ -71,6 +74,17 @@ These runs use tabular plus 24-hour temporal features, without static graph feat
 | Random Forest | 1.000000 | 1.000000 | 0.999201 | 0.999600 | 1.000000 |
 | XGBoost | 0.996539 | 0.971273 | 0.999201 | 0.985039 | 0.999954 |
 | MLP | 0.877710 | 0.831137 | 0.805911 | 0.818329 | 0.994307 |
+
+### Supplemental sampled-graph comparison
+
+Built locally with NetworkX from a deterministic random sample of 50,000 training transactions, including 51 fraud rows and 98,145 accounts (seed 42), retaining the chronological training cutoff. Models train on sampled training rows; validation and test remain unchanged. Sample graph community IDs are weakly connected components rather than Louvain communities. These results do not count toward the planned 12-run Neo4j/GDS matrix and are not directly comparable to full-graph GDS features.
+
+| Model | PR-AUC | Precision | Recall | F1 | ROC-AUC |
+|---|---:|---:|---:|---:|---:|
+| Logistic | 0.765795 | 0.833517 | 0.603834 | 0.700324 | 0.979015 |
+| Random Forest | 0.996614 | 0.993605 | 0.992812 | 0.993208 | 0.999298 |
+| XGBoost | 0.970304 | 0.899696 | 0.945687 | 0.922118 | 0.998864 |
+| MLP | 0.751701 | 0.900878 | 0.573482 | 0.700830 | 0.963074 |
 
 The PaySim CSV was obtained from [Kaggle: Synthetic Financial Datasets For Fraud Detection](https://www.kaggle.com/datasets/ealaxi/paysim1), licensed CC BY-SA 4.0. The raw dataset is not included in this repository.
 <!-- END MEASURED RESULTS -->

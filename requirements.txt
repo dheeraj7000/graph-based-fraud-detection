@@ -8,4 +8,5 @@ duckdb>=1.1
 xgboost>=2.0
 torch>=2.2
 neo4j>=5.18
+networkx>=3.0
 pytest>=8.0

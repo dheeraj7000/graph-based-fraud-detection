@@ -10,6 +10,11 @@ from src.graph.static_features import (
     causal_unique_counterparty_counts,
     training_graph_transactions,
 )
+from src.graph.sampled_features import (
+    attach_sampled_graph_features,
+    sample_training_edges,
+    sampled_graph_account_features,
+)
 from src.graph.temporal_features import (
     build_temporal_features,
     max_history_step_for_transaction,
@@ -84,6 +89,23 @@ def test_training_graph_is_cut_off_at_train_end() -> None:
     training = training_graph_transactions(sample_transactions(), 2)
     assert training["step"].max() == 2
     assert len(training) == 3
+
+
+def test_sampled_training_graph_is_seeded_capped_and_causal() -> None:
+    transactions = sample_transactions()
+    sampled_a = sample_training_edges(transactions, train_end_step=2, max_edges=2, seed=7)
+    sampled_b = sample_training_edges(transactions, train_end_step=2, max_edges=2, seed=7)
+    assert len(sampled_a) == 2
+    assert sampled_a.index.tolist() == sampled_b.index.tolist()
+    assert sampled_a["step"].max() <= 2
+
+    account_features = sampled_graph_account_features(sampled_a)
+    row_features = attach_sampled_graph_features(
+        transactions, sampled_a, account_features, train_end_step=2
+    )
+    assert row_features.loc[sampled_a.index, "source_pagerank"].eq(0).all()
+    assert row_features.loc[sampled_a.index, "source_community_id"].eq(-1).all()
+    assert row_features.loc[3, "destination_pagerank"] > 0
 
 
 def test_training_static_graph_features_use_only_prior_steps() -> None:
@@ -164,6 +186,11 @@ def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> Non
         '{"transactions": 900, "fraud_count": 9, "fraud_percentage": 1.0}',
         encoding="utf-8",
     )
+    (tmp_path / "data" / "processed" / "sampled_graph_metadata.json").write_text(
+        '{"sampled_training_edges": 50, "sampled_training_frauds": 2, '
+        '"sampled_training_accounts": 90, "seed": 42}',
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     results = pd.DataFrame(
         [
@@ -185,6 +212,15 @@ def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> Non
                 "f1": 0.39,
                 "roc_auc": 0.75,
             },
+            {
+                "model": "Logistic",
+                "features": "sampled_graph",
+                "pr_auc": 0.3,
+                "precision": 0.4,
+                "recall": 0.5,
+                "f1": 0.44,
+                "roc_auc": 0.8,
+            },
         ]
     )
     _publish_readme_results(results)
@@ -195,6 +231,8 @@ def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> Non
     assert "Supplemental temporal-only comparison" in readme
     assert "do not count toward the planned 12-run matrix" in readme
     assert "| Logistic | 0.250000 | 0.350000 |" in readme
+    assert "50 training transactions, including 2 fraud rows and 90 accounts" in readme
+    assert "weakly connected components rather than Louvain" in readme
     _publish_readme_results(results)
     updated_readme = (tmp_path / "README.md").read_text(encoding="utf-8")
     assert updated_readme == readme

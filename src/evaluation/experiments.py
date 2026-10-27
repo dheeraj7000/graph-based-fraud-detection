@@ -30,6 +30,7 @@ FEATURE_FILES = {
     "static": "static_graph_features.parquet",
     "temporal": "temporal_graph_features.parquet",
     "temporal_only": "temporal_graph_features.parquet",
+    "sampled_graph": "sampled_graph_features.parquet",
 }
 
 
@@ -298,9 +299,8 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
         if (model, "temporal_only") in rows
     ]
     if temporal_only_rows:
-        section += "\n".join(
+        section += "\n\n" + "\n".join(
             [
-                "",
                 "### Supplemental temporal-only comparison",
                 "",
                 "These runs use tabular plus 24-hour temporal features, without static graph features. "
@@ -324,6 +324,56 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
                     )
                     + " |"
                     for record in temporal_only_rows
+                ],
+            ]
+        )
+    sampled_graph_rows = [
+        rows[(model, "sampled_graph")]
+        for model in model_order
+        if (model, "sampled_graph") in rows
+    ]
+    if sampled_graph_rows:
+        sample_metadata_path = Path("data/processed/sampled_graph_metadata.json")
+        if not sample_metadata_path.is_file():
+            raise FileNotFoundError(
+                "Sampled graph results require sampled_graph_metadata.json"
+            )
+        sample_metadata = json.loads(
+            sample_metadata_path.read_text(encoding="utf-8")
+        )
+        section += "\n\n" + "\n".join(
+            [
+                "### Supplemental sampled-graph comparison",
+                "",
+                f"Built locally with NetworkX from a deterministic random sample of "
+                f"{int(sample_metadata['sampled_training_edges']):,} training "
+                f"transactions, including {int(sample_metadata['sampled_training_frauds']):,} "
+                f"fraud rows and {int(sample_metadata['sampled_training_accounts']):,} "
+                f"accounts (seed {int(sample_metadata['seed'])}), retaining the "
+                "chronological training cutoff. Models train on sampled training rows; "
+                "validation and test remain unchanged. Sample graph community IDs are "
+                "weakly connected components rather than Louvain communities. These "
+                "results do not count toward the planned 12-run Neo4j/GDS matrix and "
+                "are not directly comparable to full-graph GDS features.",
+                "",
+                "| Model | PR-AUC | Precision | Recall | F1 | ROC-AUC |",
+                "|---|---:|---:|---:|---:|---:|",
+                *[
+                    "| "
+                    + str(record["model"])
+                    + " | "
+                    + " | ".join(
+                        f"{float(record[key]):.6f}"
+                        for key in (
+                            "pr_auc",
+                            "precision",
+                            "recall",
+                            "f1",
+                            "roc_auc",
+                        )
+                    )
+                    + " |"
+                    for record in sampled_graph_rows
                 ],
             ]
         )
@@ -399,6 +449,7 @@ def run_experiments(
     results: list[dict[str, Any]] = []
     curves: list[tuple[np.ndarray, np.ndarray, str]] = []
     for group in feature_groups:
+        fit_train = train.copy()
         features = _load_features((group,))
         if group == "tabular":
             selected = tabular_columns
@@ -429,10 +480,33 @@ def run_experiments(
                     "Run scripts/run_temporal_features.py first."
                 )
             selected = tabular_columns + static_columns + temporal_columns
+        elif group == "sampled_graph":
+            sampled_feature_path = (
+                Path("data/features") / FEATURE_FILES["sampled_graph"]
+            )
+            sampled_path = Path("data/processed/sampled_graph_train_rows.parquet")
+            if not sampled_feature_path.is_file():
+                raise FileNotFoundError(
+                    "Missing sampled graph feature cache. "
+                    "Run scripts/run_sampled_graph_features.py first."
+                )
+            if not sampled_path.is_file():
+                raise FileNotFoundError(
+                    "Missing sampled graph training row IDs. "
+                    "Run scripts/run_sampled_graph_features.py first."
+                )
+            sampled_row_ids = pd.read_parquet(sampled_path)["_row_id"].to_numpy()
+            fit_train &= np.isin(row_ids, sampled_row_ids)
+            sampled_columns = [
+                column
+                for column in pq.ParquetFile(sampled_feature_path).schema.names
+                if column != "_row_id"
+            ]
+            selected = tabular_columns + sampled_columns
         else:
             raise ValueError(f"Unknown feature group: {group}")
         group_x = features[selected].to_numpy(dtype=np.float32)
-        classical = _make_classical_models(config, y[train])
+        classical = _make_classical_models(config, y[fit_train])
         models: dict[str, Any] = dict(classical)
         if config["models"].get("mlp", True):
             models["MLP"] = MLPTrainer(
@@ -444,11 +518,16 @@ def run_experiments(
 
         for model_name, model in models.items():
             if model_name == "MLP":
-                model.fit(group_x[train], y[train], group_x[validation], y[validation])
+                model.fit(
+                    group_x[fit_train],
+                    y[fit_train],
+                    group_x[validation],
+                    y[validation],
+                )
                 validation_scores = model.predict_proba(group_x[validation])
                 test_scores = model.predict_proba(group_x[test])
             else:
-                model.fit(group_x[train], y[train])
+                model.fit(group_x[fit_train], y[fit_train])
                 validation_scores = model.predict_proba(group_x[validation])[:, 1]
                 test_scores = model.predict_proba(group_x[test])[:, 1]
             threshold = select_threshold(y[validation], validation_scores)
@@ -458,7 +537,7 @@ def run_experiments(
                     "model": model_name,
                     "features": group,
                     **metrics,
-                    "train_rows": int(train.sum()),
+                    "train_rows": int(fit_train.sum()),
                     "validation_rows": int(validation.sum()),
                     "test_rows": int(test.sum()),
                 }
