@@ -12,11 +12,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     PrecisionRecallDisplay,
-    average_precision_score,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
 )
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -27,9 +22,7 @@ from src.utils.config import load_config
 
 FEATURE_FILES = {
     "tabular": "tabular_features.parquet",
-    "static": "static_graph_features.parquet",
     "temporal": "temporal_graph_features.parquet",
-    "temporal_only": "temporal_graph_features.parquet",
     "sampled_graph": "sampled_graph_features.parquet",
 }
 
@@ -38,18 +31,30 @@ def _load_features(groups: tuple[str, ...]) -> pd.DataFrame:
     base = pd.read_parquet(Path("data/features") / FEATURE_FILES["tabular"])
     row_ids = base.pop("_row_id").to_numpy()
     feature_blocks = [base]
+    feature_files = []
     for group in groups:
-        if group == "tabular":
+        if group in ("tabular", "tabular_sampled"):
             continue
-        path = Path("data/features") / FEATURE_FILES[group]
+        if group in ("sampled_graph", "sampled_temporal"):
+            feature_files.append(FEATURE_FILES["sampled_graph"])
+        if group in ("temporal_only", "sampled_temporal"):
+            feature_files.append(FEATURE_FILES["temporal"])
+        if group not in (
+            "sampled_graph",
+            "sampled_temporal",
+            "temporal_only",
+        ):
+            raise ValueError(f"Unknown feature group: {group}")
+    for filename in feature_files:
+        path = Path("data/features") / filename
         if not path.is_file():
             raise FileNotFoundError(
-                f"Missing {group} feature cache: {path}. Run its feature-generation stage."
+                f"Missing feature cache: {path}. Run its feature-generation stage."
             )
         extra = pd.read_parquet(path)
         extra_row_ids = extra.pop("_row_id").to_numpy()
         if not np.array_equal(row_ids, extra_row_ids):
-            raise ValueError(f"{group} feature rows do not match tabular row IDs")
+            raise ValueError(f"{filename} feature rows do not match tabular row IDs")
         feature_blocks.append(extra)
     features = pd.concat(feature_blocks, axis=1, copy=False)
     if features.isna().any().any():
@@ -140,12 +145,18 @@ def _save_plots(
 
     gains = results.pivot(index="model", columns="features", values="pr_auc")
     ablation = pd.DataFrame(index=gains.index)
-    if {"tabular", "static"}.issubset(gains.columns):
-        ablation["static_graph_gain"] = gains["static"] - gains["tabular"]
-    if {"static", "temporal"}.issubset(gains.columns):
-        ablation["temporal_gain"] = gains["temporal"] - gains["static"]
-    if {"tabular", "temporal"}.issubset(gains.columns):
-        ablation["total_graph_gain"] = gains["temporal"] - gains["tabular"]
+    if {"tabular_sampled", "sampled_graph"}.issubset(gains.columns):
+        ablation["sampled_graph_gain"] = (
+            gains["sampled_graph"] - gains["tabular_sampled"]
+        )
+    if {"sampled_graph", "sampled_temporal"}.issubset(gains.columns):
+        ablation["temporal_gain"] = (
+            gains["sampled_temporal"] - gains["sampled_graph"]
+        )
+    if {"tabular_sampled", "sampled_temporal"}.issubset(gains.columns):
+        ablation["total_graph_gain"] = (
+            gains["sampled_temporal"] - gains["tabular_sampled"]
+        )
     if not ablation.empty:
         ablation.to_csv("results/metrics/ablation_gains.csv")
         ax = ablation.plot.bar(figsize=(10, 6))
@@ -160,20 +171,33 @@ def _save_research_summary(results: pd.DataFrame) -> None:
     expected = {
         (model, feature_set)
         for model in ("Logistic", "Random Forest", "XGBoost", "MLP")
-        for feature_set in ("tabular", "static", "temporal")
+        for feature_set in ("tabular_sampled", "sampled_graph", "sampled_temporal")
     }
     completed = set(zip(results["model"], results["features"]))
     if not expected.issubset(completed):
         return
     by_model = results.pivot(index="model", columns="features")
-    static_gain = by_model["pr_auc"]["static"] - by_model["pr_auc"]["tabular"]
-    temporal_gain = by_model["pr_auc"]["temporal"] - by_model["pr_auc"]["static"]
-    total_gain = by_model["pr_auc"]["temporal"] - by_model["pr_auc"]["tabular"]
+    static_gain = (
+        by_model["pr_auc"]["sampled_graph"]
+        - by_model["pr_auc"]["tabular_sampled"]
+    )
+    temporal_gain = (
+        by_model["pr_auc"]["sampled_temporal"]
+        - by_model["pr_auc"]["sampled_graph"]
+    )
+    total_gain = (
+        by_model["pr_auc"]["sampled_temporal"]
+        - by_model["pr_auc"]["tabular_sampled"]
+    )
     best_model = str(total_gain.idxmax())
     precision_delta = (
-        by_model["precision"]["temporal"] - by_model["precision"]["tabular"]
+        by_model["precision"]["sampled_temporal"]
+        - by_model["precision"]["tabular_sampled"]
     )
-    recall_delta = by_model["recall"]["temporal"] - by_model["recall"]["tabular"]
+    recall_delta = (
+        by_model["recall"]["sampled_temporal"]
+        - by_model["recall"]["tabular_sampled"]
+    )
     precision_magnitude = float(precision_delta.abs().mean())
     recall_magnitude = float(recall_delta.abs().mean())
     if np.isclose(precision_magnitude, recall_magnitude):
@@ -189,21 +213,24 @@ def _save_research_summary(results: pd.DataFrame) -> None:
         "All PR-AUC values and gains below are measured on the untouched chronological test set. "
         "They describe association, not causation.",
         "",
-        f"1. **Do static graph features improve fraud detection?** Mean static-minus-tabular "
+        f"1. **Do sampled custom-graph features improve fraud detection?** Mean "
+        "sampled-graph-minus-tabular "
         f"PR-AUC across model families: {static_gain.mean():+.6f} "
         f"({int((static_gain > 0).sum())}/{len(static_gain)} models improved).",
-        f"2. **Does recent network activity add signal beyond static structure?** Mean "
-        f"temporal-minus-static PR-AUC: {temporal_gain.mean():+.6f} "
+        f"2. **Does recent activity add signal beyond sampled graph structure?** Mean "
+        f"sampled-temporal-minus-sampled-graph PR-AUC: {temporal_gain.mean():+.6f} "
         f"({int((temporal_gain > 0).sum())}/{len(temporal_gain)} models improved).",
-        f"3. **Which model benefits most from graph features?** {best_model} has the largest "
-        f"temporal-minus-tabular PR-AUC gain ({total_gain[best_model]:+.6f}).",
+        f"3. **Which model benefits most from custom graph and temporal features?** "
+        f"{best_model} has the largest sampled-temporal-minus-tabular PR-AUC gain "
+        f"({total_gain[best_model]:+.6f}).",
         f"4. **Do graph features primarily improve precision, recall, or both?** For "
-        f"temporal versus tabular predictions at their validation-selected thresholds, "
+        f"sampled-temporal versus sampled-tabular predictions at their "
+        f"validation-selected thresholds, "
         f"mean precision change is {precision_delta.mean():+.6f} and mean recall change is "
         f"{recall_delta.mean():+.6f}; absolute changes are larger for {primary_change}.",
-        "5. **How does performance change for transactions involving unseen accounts?** "
-        "See `unseen_account_rates.csv` for validation/test coverage and "
-        "`best_model_unseen_subgroups.csv` for the best model's known/unseen source-destination breakdown.",
+        "5. **How should these results be interpreted?** They describe this deterministic "
+        "50,000-edge training sample and full chronological validation/test periods; "
+        "they are not estimates from the full transaction graph.",
         "",
         "Per-model results and ablation gains are in `main_results.csv` and "
         "`ablation_gains.csv`. No outcome is assumed in advance.",
@@ -232,7 +259,7 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
         for row in results.to_dict(orient="records")
     }
     model_order = ("Logistic", "Random Forest", "XGBoost", "MLP")
-    feature_order = ("tabular", "static", "temporal")
+    feature_order = ("tabular_sampled", "sampled_graph", "sampled_temporal")
     table = [
         "| Model | Features | PR-AUC | Precision | Recall | F1 | ROC-AUC |",
         "|---|---|---:|---:|---:|---:|---:|",
@@ -260,12 +287,13 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
     }
     completed_pairs = set(rows).intersection(expected_pairs)
     if expected_pairs.issubset(completed_pairs):
-        status = "All 12 planned model/feature experiments completed."
+        status = "All 12 local custom-graph model/feature experiments completed."
     else:
         status = (
-            f"Partial run: {len(completed_pairs)}/12 planned experiments completed. "
+            f"Partial local custom-graph run: {len(completed_pairs)}/12 "
+            "model/feature experiments completed. "
             "Results below are measured; missing matrix cells are not run. "
-            "Do not interpret the table as a completed ablation."
+            "Do not interpret the table as a completed comparison."
         )
     section = "\n".join(
         [
@@ -285,10 +313,8 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
             f"{int(split['test_steps']):,} test.",
             "- Reported PR-AUC, ROC-AUC, precision, recall, and F1 are test-set measurements. "
             "Threshold-dependent metrics use thresholds chosen on validation data only.",
-            f"- Static graph and planned static-plus-temporal experiments are not run: "
-            f"the training graph would require {int(split['train_steps']):,} transaction "
-            "relationships plus millions of account nodes, beyond AuraDB Free capacity. "
-            "No PaySim graph data was written to Aura.",
+            "- Custom graph comparisons use the same deterministic sampled training rows "
+            "for all models and feature sets. Validation and test rows remain unchanged.",
             "",
             *table,
         ]
@@ -327,12 +353,7 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
                 ],
             ]
         )
-    sampled_graph_rows = [
-        rows[(model, "sampled_graph")]
-        for model in model_order
-        if (model, "sampled_graph") in rows
-    ]
-    if sampled_graph_rows:
+    if any((model, "sampled_graph") in rows for model in model_order):
         sample_metadata_path = Path("data/processed/sampled_graph_metadata.json")
         if not sample_metadata_path.is_file():
             raise FileNotFoundError(
@@ -343,18 +364,30 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
         )
         section += "\n\n" + "\n".join(
             [
-                "### Supplemental sampled-graph comparison",
-                "",
-                f"Built locally with NetworkX from a deterministic random sample of "
-                f"{int(sample_metadata['sampled_training_edges']):,} training "
+                "The local custom graph is built with NetworkX from a deterministic random "
+                f"sample of {int(sample_metadata['sampled_training_edges']):,} training "
                 f"transactions, including {int(sample_metadata['sampled_training_frauds']):,} "
                 f"fraud rows and {int(sample_metadata['sampled_training_accounts']):,} "
-                f"accounts (seed {int(sample_metadata['seed'])}), retaining the "
-                "chronological training cutoff. Models train on sampled training rows; "
-                "validation and test remain unchanged. Sample graph community IDs are "
-                "weakly connected components rather than Louvain communities. These "
-                "results do not count toward the planned 12-run Neo4j/GDS matrix and "
-                "are not directly comparable to full-graph GDS features.",
+                f"accounts (seed {int(sample_metadata['seed'])}).",
+                "",
+                "All models are fit on these sampled training rows; the three feature sets "
+                "are tabular-only, tabular plus sampled graph, and tabular plus sampled graph "
+                "and 24-hour temporal features. Validation and test rows remain unchanged. "
+                "The sampled graph uses weighted PageRank and weakly connected components, "
+                "not full-graph Louvain communities.",
+            ]
+        )
+    full_tabular_rows = [
+        rows[(model, "tabular")] for model in model_order if (model, "tabular") in rows
+    ]
+    if full_tabular_rows:
+        section += "\n\n" + "\n".join(
+            [
+                "### Supplemental full-training-data tabular baselines",
+                "",
+                "These previously measured tabular runs used the full training split and "
+                "are reported separately; compare sampled-graph matrix cells against "
+                "`tabular_sampled` for a matched training sample.",
                 "",
                 "| Model | PR-AUC | Precision | Recall | F1 | ROC-AUC |",
                 "|---|---:|---:|---:|---:|---:|",
@@ -364,16 +397,10 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
                     + " | "
                     + " | ".join(
                         f"{float(record[key]):.6f}"
-                        for key in (
-                            "pr_auc",
-                            "precision",
-                            "recall",
-                            "f1",
-                            "roc_auc",
-                        )
+                        for key in ("pr_auc", "precision", "recall", "f1", "roc_auc")
                     )
                     + " |"
-                    for record in sampled_graph_rows
+                    for record in full_tabular_rows
                 ],
             ]
         )
@@ -393,7 +420,11 @@ def _publish_readme_results(results: pd.DataFrame) -> None:
 
 
 def run_experiments(
-    feature_groups: tuple[str, ...] = ("tabular", "static", "temporal")
+    feature_groups: tuple[str, ...] = (
+        "tabular_sampled",
+        "sampled_graph",
+        "sampled_temporal",
+    )
 ) -> pd.DataFrame:
     config = load_config()
     metadata_path = Path("data/processed/split_metadata.parquet")
@@ -406,15 +437,15 @@ def run_experiments(
         for column in pq.ParquetFile(tabular_file).schema.names
         if column != "_row_id"
     ]
-    static_path = Path("data/features") / FEATURE_FILES["static"]
     temporal_path = Path("data/features") / FEATURE_FILES["temporal"]
-    static_columns = (
+    sampled_graph_path = Path("data/features") / FEATURE_FILES["sampled_graph"]
+    sampled_graph_columns = (
         [
             column
-            for column in pq.ParquetFile(static_path).schema.names
+            for column in pq.ParquetFile(sampled_graph_path).schema.names
             if column != "_row_id"
         ]
-        if static_path.is_file()
+        if sampled_graph_path.is_file()
         else []
     )
     temporal_columns = (
@@ -450,59 +481,46 @@ def run_experiments(
     curves: list[tuple[np.ndarray, np.ndarray, str]] = []
     for group in feature_groups:
         fit_train = train.copy()
-        features = _load_features((group,))
-        if group == "tabular":
-            selected = tabular_columns
-        elif group == "static":
-            if not static_columns:
+        if group in ("tabular_sampled", "sampled_graph", "sampled_temporal"):
+            sampled_path = Path("data/processed/sampled_graph_train_rows.parquet")
+            if not sampled_graph_path.is_file() or not sampled_path.is_file():
                 raise FileNotFoundError(
-                    f"Missing static graph cache: {static_path}. "
-                    "Run scripts/run_graph_features.py first."
+                    "Missing custom sampled-graph cache or row IDs. "
+                    "Run scripts/run_sampled_graph_features.py first."
                 )
-            selected = tabular_columns + static_columns
+            sampled_row_ids = pd.read_parquet(sampled_path)["_row_id"].to_numpy()
+            fit_train &= np.isin(row_ids, sampled_row_ids)
+        features = _load_features((group,))
+        if group in ("tabular", "tabular_sampled"):
+            selected = tabular_columns
+        elif group == "sampled_graph":
+            if not sampled_graph_columns:
+                raise FileNotFoundError(
+                    f"Missing sampled graph cache: {sampled_graph_path}. "
+                    "Run scripts/run_sampled_graph_features.py first."
+                )
+            selected = tabular_columns + sampled_graph_columns
         elif group == "temporal_only":
-            if not temporal_columns:
+            if not temporal_columns or not temporal_path.is_file():
                 raise FileNotFoundError(
                     f"Missing temporal graph cache: {temporal_path}. "
                     "Run scripts/run_temporal_features.py first."
                 )
             selected = tabular_columns + temporal_columns
-        elif group == "temporal":
-            if not static_columns:
+        elif group == "sampled_temporal":
+            if not sampled_graph_columns:
                 raise FileNotFoundError(
-                    f"Missing static graph cache: {static_path}. "
-                    "The planned temporal group combines static and temporal "
-                    "features; run scripts/run_graph_features.py first."
+                    f"Missing sampled graph cache: {sampled_graph_path}. "
+                    "Run scripts/run_sampled_graph_features.py first."
                 )
-            if not temporal_columns:
+            if not temporal_columns or not temporal_path.is_file():
                 raise FileNotFoundError(
                     f"Missing temporal graph cache: {temporal_path}. "
                     "Run scripts/run_temporal_features.py first."
                 )
-            selected = tabular_columns + static_columns + temporal_columns
-        elif group == "sampled_graph":
-            sampled_feature_path = (
-                Path("data/features") / FEATURE_FILES["sampled_graph"]
+            selected = (
+                tabular_columns + sampled_graph_columns + temporal_columns
             )
-            sampled_path = Path("data/processed/sampled_graph_train_rows.parquet")
-            if not sampled_feature_path.is_file():
-                raise FileNotFoundError(
-                    "Missing sampled graph feature cache. "
-                    "Run scripts/run_sampled_graph_features.py first."
-                )
-            if not sampled_path.is_file():
-                raise FileNotFoundError(
-                    "Missing sampled graph training row IDs. "
-                    "Run scripts/run_sampled_graph_features.py first."
-                )
-            sampled_row_ids = pd.read_parquet(sampled_path)["_row_id"].to_numpy()
-            fit_train &= np.isin(row_ids, sampled_row_ids)
-            sampled_columns = [
-                column
-                for column in pq.ParquetFile(sampled_feature_path).schema.names
-                if column != "_row_id"
-            ]
-            selected = tabular_columns + sampled_columns
         else:
             raise ValueError(f"Unknown feature group: {group}")
         group_x = features[selected].to_numpy(dtype=np.float32)
@@ -593,72 +611,5 @@ def run_experiments(
     _save_plots(results_frame, curves)
     _publish_readme_results(results_frame)
     _save_research_summary(results_frame)
-    static_path = Path("data/features") / FEATURE_FILES["static"]
-    if static_path.is_file() and not results_frame.empty:
-        static = pd.read_parquet(static_path)
-        unseen_summary = []
-        for period, mask in (("validation", validation), ("test", test)):
-            period_static = static.loc[mask]
-            unseen_summary.append(
-                {
-                    "period": period,
-                    "source_unseen_percent": float(
-                        period_static["source_unseen"].mean() * 100
-                    ),
-                    "destination_unseen_percent": float(
-                        period_static["destination_unseen"].mean() * 100
-                    ),
-                }
-            )
-        pd.DataFrame(unseen_summary).to_csv(
-            output_dir / "unseen_account_rates.csv", index=False
-        )
-
-        best = results_frame.loc[results_frame["pr_auc"].idxmax()]
-        prediction_path = prediction_dir / f"{best['model']}_{best['features']}.parquet"
-        best_predictions = pd.read_parquet(prediction_path)
-        test_static = static.loc[test].reset_index(drop=True)
-        source_unseen = test_static["source_unseen"].astype(bool).to_numpy()
-        destination_unseen = test_static["destination_unseen"].astype(bool).to_numpy()
-        categories = {
-            "known_to_known": ~source_unseen & ~destination_unseen,
-            "known_to_unseen": ~source_unseen & destination_unseen,
-            "unseen_to_known": source_unseen & ~destination_unseen,
-            "unseen_to_unseen": source_unseen & destination_unseen,
-        }
-        subgroup_rows = []
-        y_test = best_predictions["y_true"].to_numpy()
-        scores = best_predictions["probability"].to_numpy()
-        predictions = best_predictions["prediction"].astype(bool).to_numpy()
-        for category, mask in categories.items():
-            if not mask.any():
-                subgroup_rows.append({"category": category, "transactions": 0})
-                continue
-            labels = y_test[mask]
-            selected_scores = scores[mask]
-            selected_predictions = predictions[mask]
-            subgroup_rows.append(
-                {
-                    "category": category,
-                    "transactions": int(mask.sum()),
-                    "positive_transactions": int(labels.sum()),
-                    "pr_auc": float(average_precision_score(labels, selected_scores))
-                    if labels.sum()
-                    else float("nan"),
-                    "roc_auc": float(roc_auc_score(labels, selected_scores))
-                    if np.unique(labels).size == 2
-                    else float("nan"),
-                    "precision": float(
-                        precision_score(labels, selected_predictions, zero_division=0)
-                    ),
-                    "recall": float(
-                        recall_score(labels, selected_predictions, zero_division=0)
-                    ),
-                    "f1": float(f1_score(labels, selected_predictions, zero_division=0)),
-                }
-            )
-        pd.DataFrame(subgroup_rows).to_csv(
-            output_dir / "best_model_unseen_subgroups.csv", index=False
-        )
     print(results_frame[["model", "features", "pr_auc", "precision", "recall", "f1"]])
     return results_frame

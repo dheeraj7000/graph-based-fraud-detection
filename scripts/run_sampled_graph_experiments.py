@@ -7,4 +7,4 @@ from src.evaluation.experiments import run_experiments
 
 
 if __name__ == "__main__":
-    run_experiments(feature_groups=("sampled_graph",))
+    run_experiments()

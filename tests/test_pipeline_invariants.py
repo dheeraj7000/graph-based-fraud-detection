@@ -6,8 +6,8 @@ from src.data.split import chronological_split
 from src.evaluation.experiments import _publish_readme_results
 from src.evaluation.metrics import evaluate_with_validation_threshold, select_threshold
 from src.graph.static_features import (
-    attach_account_features,
     causal_unique_counterparty_counts,
+    causal_static_prefix_features,
     training_graph_transactions,
 )
 from src.graph.sampled_features import (
@@ -108,26 +108,12 @@ def test_sampled_training_graph_is_seeded_capped_and_causal() -> None:
     assert row_features.loc[3, "destination_pagerank"] > 0
 
 
-def test_training_static_graph_features_use_only_prior_steps() -> None:
+def test_training_graph_prefix_features_use_only_prior_steps() -> None:
     transactions = sample_transactions()
-    accounts = pd.DataFrame(
-        {
-            "account_id": ["A", "B", "C", "D", "E"],
-            "pagerank": [0.2] * 5,
-            "in_degree": [2] * 5,
-            "out_degree": [3] * 5,
-            "weighted_degree": [10.0] * 5,
-            "unique_counterparty": [2] * 5,
-            "community_id": [7] * 5,
-        }
-    )
-    features = attach_account_features(transactions, accounts, train_end_step=2)
+    features = causal_static_prefix_features(transactions, train_end_step=2)
     assert features.loc[0, "source_out_degree"] == 0
     assert features.loc[2, "source_out_degree"] == 1
     assert features.loc[2, "destination_in_degree"] == 2
-    assert features.loc[2, "source_pagerank"] == 0
-    assert features.loc[2, "source_community_id"] == -1
-    assert features.loc[3, "source_pagerank"] == 0.2
     assert features.loc[0, "source_unseen"] == 1
     assert features.loc[2, "source_unseen"] == 0
 
@@ -196,7 +182,7 @@ def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> Non
         [
             {
                 "model": "Logistic",
-                "features": "tabular",
+                "features": "tabular_sampled",
                 "pr_auc": 0.2,
                 "precision": 0.3,
                 "recall": 0.4,
@@ -221,18 +207,27 @@ def test_readme_results_publish_only_measured_rows(tmp_path, monkeypatch) -> Non
                 "f1": 0.44,
                 "roc_auc": 0.8,
             },
+            {
+                "model": "Logistic",
+                "features": "sampled_temporal",
+                "pr_auc": 0.35,
+                "precision": 0.45,
+                "recall": 0.55,
+                "f1": 0.49,
+                "roc_auc": 0.85,
+            },
         ]
     )
     _publish_readme_results(results)
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "Partial run: 1/12 planned experiments completed." in readme
-    assert "| Logistic | tabular | 0.200000 | 0.300000 |" in readme
-    assert "| Logistic | static | Not run |" in readme
+    assert "Partial local custom-graph run: 3/12 model/feature experiments completed." in readme
+    assert "| Logistic | tabular_sampled | 0.200000 | 0.300000 |" in readme
     assert "Supplemental temporal-only comparison" in readme
     assert "do not count toward the planned 12-run matrix" in readme
     assert "| Logistic | 0.250000 | 0.350000 |" in readme
+    assert "| Logistic | sampled_temporal | 0.350000 |" in readme
     assert "50 training transactions, including 2 fraud rows and 90 accounts" in readme
-    assert "weakly connected components rather than Louvain" in readme
+    assert "not full-graph Louvain communities" in readme
     _publish_readme_results(results)
     updated_readme = (tmp_path / "README.md").read_text(encoding="utf-8")
     assert updated_readme == readme
