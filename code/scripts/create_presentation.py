@@ -21,7 +21,7 @@ SPLIT_METADATA_PATH = PROCESSED_DIR / "split_metadata.parquet"
 METADATA_PATH = PROCESSED_DIR / "sampled_graph_metadata.json"
 FULL_METADATA_PATH = PROCESSED_DIR / "full_graph_metadata.json"
 DEMO_SCREENS_DIR = ROOT / "presentations" / "demo_screens"
-OUTPUT_PATH = ROOT / "presentations" / "Group19-Project19-FA26-Group-DEMO-Presentation.pptx"
+OUTPUT_PATH = ROOT / "presentations" / "Group19-Fraud-Detection-with-Graph-Databases-FA26-Group-DEMO-Presentation.pptx"
 
 GROUP = "Group 19"
 TITLE = "Fraud Detection with Graph Databases"

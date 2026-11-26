@@ -69,7 +69,7 @@ The app runs offline from cached results and has four sections: the accuracy tra
 
 ## Presentations
 
-The [project presentation](presentations/Graph_Based_Fraud_Detection.pptx) is from the October milestone. The [demo presentation](presentations/Group19-Project19-FA26-Group-DEMO-Presentation.pptx) is generated from the measured results and demo screenshots:
+The [project presentation](presentations/Graph_Based_Fraud_Detection.pptx) is from the October milestone. The [demo presentation](presentations/Group19-Fraud-Detection-with-Graph-Databases-FA26-Group-DEMO-Presentation.pptx) is generated from the measured results and demo screenshots:
 
 ```powershell
 python code/scripts/create_presentation.py
