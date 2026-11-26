@@ -1,6 +1,6 @@
 # Fraud Detection with Graph Databases
 
-CSE 573, Fall 2026, Group 19: Vatsal Joshi, Dheeraj Kumar, Yaksh Pancholi, Lovinder Singh, Samarth Ogae.
+CSE 573, Fall 2026, Group 19: Vatsal Joshi, Dheeraj Kumar, Yaksh Pancholi, Lovinder Singh, Samarth Ogale.
 
 This repository detects fraud in the PaySim mobile-money dataset (6.36M transactions, 0.129% fraud) using transaction features, 24-hour account activity, and features from the account graph, with four classifiers: Logistic Regression, Random Forest, XGBoost, and an MLP. The account graph is held in-process as SciPy sparse matrices, with DuckDB for windowed history queries, so no graph database server is required. An interactive Streamlit app presents the results.
 

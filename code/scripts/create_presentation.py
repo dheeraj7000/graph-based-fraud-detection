@@ -32,7 +32,7 @@ TEAM = (
     ("Dheeraj Kumar", "dkumar70@asu.edu", "1238144975"),
     ("Yaksh Pancholi", "ypancho1@asu.edu", "1239803113"),
     ("Lovinder Singh", "Lsingh38@asu.edu", "1238337284"),
-    ("Samarth Ogae", "sogale@asu.edu", "1237833014"),
+    ("Samarth Ogale", "sogale@asu.edu", "1237833014"),
 )
 PLAN = (
     ("Dataset acquisition, EDA, preprocessing, chronological split", "Yaksh Pancholi", "Oct 24", "Done"),
@@ -42,7 +42,7 @@ PLAN = (
     ("Project presentation", "All members", "Oct 26", "Done"),
     ("Fraud-class metrics and ablation study (feedback)", "Vatsal Joshi", "Nov 25", "Done"),
     ("Full training graph (6.08M edges), leakage audit", "Dheeraj Kumar", "Nov 25", "Done"),
-    ("Streamlit demo UI and visualizations", "Samarth Ogae", "Nov 25", "Done"),
+    ("Streamlit demo UI and visualizations", "Samarth Ogale", "Nov 25", "Done"),
     ("Multi-seed robustness and cost-sensitive thresholds", "Lovinder Singh, Vatsal Joshi", "Dec 2", "Planned"),
     ("Final report and repository clean-up", "All members", "Dec 6", "Planned"),
 )
