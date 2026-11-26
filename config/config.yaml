@@ -13,6 +13,7 @@ temporal:
 
 graph:
   sampled_edge_limit: 50000
+  full_graph: true
 
 models:
   logistic: true
@@ -24,6 +25,9 @@ models:
   mlp_epochs: 30
   mlp_batch_size: 8192
   early_stopping_patience: 5
+  # Full-graph track: models train on every training fraud plus this fraction of
+  # legitimate training rows. Graph features still use every training edge.
+  full_train_legitimate_fraction: 0.10
 
 evaluation:
   primary_metric: pr_auc

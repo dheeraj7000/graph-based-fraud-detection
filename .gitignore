@@ -9,9 +9,7 @@ data/processed/*
 !data/processed/.gitkeep
 data/features/*
 !data/features/.gitkeep
-results/metrics/*
-results/figures/*
-results/predictions/*
-!results/**/.gitkeep
-notebooks/.ipynb_checkpoints/
+evaluations/predictions/*
+!evaluations/**/.gitkeep
+code/notebooks/.ipynb_checkpoints/
 .pytest_cache/

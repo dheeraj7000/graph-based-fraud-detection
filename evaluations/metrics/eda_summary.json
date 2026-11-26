@@ -1,0 +1,75 @@
+{
+  "transactions": 6362620,
+  "fraud_count": 8213,
+  "fraud_percentage": 0.12908204481801522,
+  "fraud_by_type": {
+    "CASH_IN": {
+      "sum": 0,
+      "count": 1399284,
+      "mean": 0.0
+    },
+    "CASH_OUT": {
+      "sum": 4116,
+      "count": 2237500,
+      "mean": 0.0018395530726256983
+    },
+    "DEBIT": {
+      "sum": 0,
+      "count": 41432,
+      "mean": 0.0
+    },
+    "PAYMENT": {
+      "sum": 0,
+      "count": 2151495,
+      "mean": 0.0
+    },
+    "TRANSFER": {
+      "sum": 4097,
+      "count": 532909,
+      "mean": 0.007687991758442811
+    }
+  },
+  "unique_source_accounts": 6353307,
+  "unique_destination_accounts": 2722362,
+  "source_reuse_frequency": {
+    "count": 6353307.0,
+    "mean": 1.0014658507766112,
+    "std": 0.038320024002551634,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 3.0
+  },
+  "destination_reuse_frequency": {
+    "count": 2722362.0,
+    "mean": 2.337168973119666,
+    "std": 4.549263642951315,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 113.0
+  },
+  "transaction_types": [
+    "CASH_IN",
+    "CASH_OUT",
+    "DEBIT",
+    "PAYMENT",
+    "TRANSFER"
+  ],
+  "missing_values": {
+    "step": 0,
+    "type": 0,
+    "amount": 0,
+    "nameOrig": 0,
+    "oldbalanceOrg": 0,
+    "newbalanceOrig": 0,
+    "nameDest": 0,
+    "oldbalanceDest": 0,
+    "newbalanceDest": 0,
+    "isFraud": 0,
+    "isFlaggedFraud": 0
+  },
+  "duplicate_rows": 0
+}

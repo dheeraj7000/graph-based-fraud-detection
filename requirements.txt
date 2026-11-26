@@ -1,6 +1,7 @@
 numpy>=1.26
 pandas>=2.1
 scikit-learn>=1.4
+scipy>=1.11
 matplotlib>=3.8
 PyYAML>=6.0
 pyarrow>=15.0
@@ -9,4 +10,5 @@ xgboost>=2.0
 torch>=2.2
 networkx>=3.0
 python-pptx>=1.0.2
+streamlit>=1.40
 pytest>=8.0
