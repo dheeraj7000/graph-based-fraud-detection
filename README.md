@@ -13,7 +13,7 @@ This repository detects fraud in the PaySim mobile-money dataset (6.36M transact
 | [`evaluations/`](evaluations) | Measured metrics (`metrics/`), figures (`figures/`), and the research summary; see [`evaluations/README.md`](evaluations/README.md) |
 | [`config/`](config) | Dataset path, sampling, and model settings |
 | [`docs/`](docs) | Project guide and demo walkthrough |
-| [`presentations/`](presentations) | Project presentation, demo presentation, and demo screenshots |
+| [`presentations/`](presentations) | Demo presentation (PPTX and PDF) and demo screenshots |
 
 All commands run from the repository root.
 
@@ -69,7 +69,7 @@ The app runs offline from cached results and has four sections: the accuracy tra
 
 ## Presentations
 
-The [project presentation](presentations/Graph_Based_Fraud_Detection.pptx) is from the October milestone. The [demo presentation](presentations/Group19-Fraud-Detection-with-Graph-Databases-FA26-Group-DEMO-Presentation.pptx) is generated from the measured results and demo screenshots:
+The [demo presentation](presentations/Group19-Fraud-Detection-with-Graph-Databases-FA26-Group-DEMO-Presentation.pptx) is generated from the measured results and demo screenshots:
 
 ```powershell
 python code/scripts/create_presentation.py

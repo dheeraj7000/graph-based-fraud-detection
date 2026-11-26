@@ -117,6 +117,6 @@ python code/scripts/create_presentation.py
 | `code/tests/` | Pipeline and leakage-invariant tests |
 | `data/` | Dataset description and a 20,000-row sample (raw data and caches are not committed) |
 | `evaluations/` | Measured metrics, figures, and research summary (per-row predictions are not committed) |
-| `presentations/` | Project and demo presentations |
+| `presentations/` | Demo presentation and demo screenshots |
 
 Run the test suite with `python -m pytest code/tests`.
