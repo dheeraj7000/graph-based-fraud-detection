@@ -13,3 +13,4 @@ evaluations/predictions/*
 !evaluations/**/.gitkeep
 code/notebooks/.ipynb_checkpoints/
 .pytest_cache/
+~$*
